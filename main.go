@@ -17,10 +17,11 @@ import (
 // SSHHost struct
 
 type SSHHost struct {
-	Host     string
-	HostName string
-	User     string
-	Port     string
+	Host         string
+	HostName     string
+	User         string
+	Port         string
+	IdentityFile string
 }
 
 // item implements list.Item for Bubbletea
@@ -91,6 +92,9 @@ func saveHostsToFile(hosts []SSHHost, path string) error {
 		}
 		if h.Port != "" {
 			fmt.Fprintf(f, "  Port %s\n", h.Port)
+		}
+		if h.IdentityFile != "" {
+			fmt.Fprintf(f, "  IdentityFile %s\n", h.IdentityFile)
 		}
 		fmt.Fprintln(f)
 	}
@@ -317,6 +321,8 @@ func main() {
 				currentHost.User = strings.TrimSpace(strings.TrimPrefix(line, "User "))
 			} else if strings.HasPrefix(line, "Port ") {
 				currentHost.Port = strings.TrimSpace(strings.TrimPrefix(line, "Port "))
+			} else if strings.HasPrefix(line, "IdentityFile ") {
+				currentHost.IdentityFile = strings.TrimSpace(strings.TrimPrefix(line, "IdentityFile "))
 			}
 
 			if currentHost.Port == "" {
