@@ -147,6 +147,10 @@ func main() {
 			} else if strings.HasPrefix(line, "Port ") {
 				currentHost.Port = strings.TrimSpace(strings.TrimPrefix(line, "Port "))
 			}
+
+			if currentHost.Port == "" {
+				currentHost.Port = "22"
+			}
 		}
 	}
 	if currentHost != nil {
