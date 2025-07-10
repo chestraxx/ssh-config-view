@@ -41,6 +41,8 @@ const (
 	modeDetails
 	modeEdit
 	modeConfirm
+	modeDeleteConfirm
+	modeDeleted
 )
 
 type model struct {
@@ -55,6 +57,7 @@ type model struct {
 	// Track selected index in the list
 	selectedIndex int
 	confirmMsg    string // message to show in confirmation mode
+	deleteIndex   int    // index to delete
 }
 
 var (
@@ -187,6 +190,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.editField = 0
 				return m, nil
 			}
+			// Allow delete with 'd'
+			if msg.String() == "d" && m.selected != nil {
+				m.mode = modeDeleteConfirm
+				m.confirmMsg = "Delete this host? (y/n)"
+				m.deleteIndex = m.selectedIndex
+				return m, nil
+			}
 			// Return to list on any key
 			m.selected = nil
 			m.mode = modeNormal
@@ -207,6 +217,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Any key returns to details mode
 			m.mode = modeDetails
 			return m, nil
+		case modeDeleteConfirm:
+			if msg.String() == "y" {
+				// Delete the item
+				items := m.list.Items()
+				if m.deleteIndex >= 0 && m.deleteIndex < len(items) {
+					newItems := append(items[:m.deleteIndex], items[m.deleteIndex+1:]...)
+					m.list.SetItems(newItems)
+					// Save to file
+					hosts := make([]SSHHost, len(newItems))
+					for i, it := range newItems {
+						hosts[i] = SSHHost(it.(item))
+					}
+					usr, err := user.Current()
+					if err == nil {
+						sshConfigPath := filepath.Join(usr.HomeDir, ".ssh", "config")
+						err = saveHostsToFile(hosts, sshConfigPath)
+						if err != nil {
+							m.confirmMsg = "Error saving after delete! Press any key."
+						} else {
+							m.confirmMsg = "Host deleted! Press any key."
+						}
+					} else {
+						m.confirmMsg = "Error saving after delete! Press any key."
+					}
+				}
+				m.mode = modeDeleted
+				return m, nil
+			} else if msg.String() == "n" {
+				m.mode = modeDetails
+				return m, nil
+			}
+			return m, nil
+		case modeDeleted:
+			// Any key returns to list view
+			m.selected = nil
+			m.mode = modeNormal
+			return m, nil
 		}
 	case tea.WindowSizeMsg:
 		m.list.SetSize(msg.Width, msg.Height-2)
@@ -225,7 +272,7 @@ func (m model) View() string {
 			s := m.selected
 			popup := lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).Width(40).Render(
 				fmt.Sprintf(
-					"Host: %s\nHostName: %s\nUser: %s\nPort: %s\n\nPress 'e' to edit, any key to return.",
+					"Host: %s\nHostName: %s\nUser: %s\nPort: %s\n\nPress 'e' to edit.\nPress 'd' to delete.\nAny key to return.",
 					s.Host, s.HostName, s.User, s.Port,
 				),
 			)
@@ -233,6 +280,10 @@ func (m model) View() string {
 		}
 		return ""
 	case modeConfirm:
+		return lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).Width(40).Render(m.confirmMsg)
+	case modeDeleteConfirm:
+		return lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).Width(40).Render(m.confirmMsg)
+	case modeDeleted:
 		return lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).Width(40).Render(m.confirmMsg)
 	default:
 		return m.list.View() + "\nPress q to quit, Enter for details."
@@ -258,7 +309,7 @@ func (m model) editView() string {
 		lines[i] = fmt.Sprintf("%s %s: %s", cursor, f.label, f.value)
 	}
 	return lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).Width(50).Render(
-		"Edit SSH Host (Tab/Shift+Tab to move, Enter to save, Esc to cancel):\n" +
+		"Edit SSH Host (\nTab/Shift+Tab to move,\nEnter to save,\nEsc to cancel):\n\n" +
 			strings.Join(lines, "\n"),
 	)
 }
