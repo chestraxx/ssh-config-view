@@ -52,12 +52,13 @@ type model struct {
 
 	// Edit mode state
 	editHost  SSHHost
-	editField int // 0=Host, 1=HostName, 2=User, 3=Port
+	editField int // 0=Host, 1=HostName, 2=User, 3=Port, 4=IdentityFile
 
 	// Track selected index in the list
 	selectedIndex int
 	confirmMsg    string // message to show in confirmation mode
 	deleteIndex   int    // index to delete
+	addingNew     bool   // true if adding a new host
 }
 
 var (
@@ -111,38 +112,65 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modeEdit:
 			switch msg.String() {
 			case "tab", "down":
-				m.editField = (m.editField + 1) % 4
+				m.editField = (m.editField + 1) % 5
 				return m, nil
 			case "shift+tab", "up":
-				m.editField = (m.editField + 3) % 4
+				m.editField = (m.editField + 4) % 5
 				return m, nil
 			case "esc":
 				m.mode = modeDetails
+				m.addingNew = false
 				return m, nil
 			case "enter":
-				// Save changes to list and file
-				m.list.SetItem(m.selectedIndex, item(m.editHost))
-				m.selected = &m.editHost // update selected pointer
-				// Save to file
-				items := m.list.Items()
-				hosts := make([]SSHHost, len(items))
-				for i, it := range items {
-					hosts[i] = SSHHost(it.(item))
-				}
-				usr, err := user.Current()
-				if err == nil {
-					sshConfigPath := filepath.Join(usr.HomeDir, ".ssh", "config")
-					err = saveHostsToFile(hosts, sshConfigPath)
-					if err != nil {
-						m.confirmMsg = "Error saving SSH config! Press any key."
-					} else {
-						m.confirmMsg = "Changes saved! Press any key to continue."
+				if m.addingNew {
+					// Add new host to list
+					m.list.InsertItem(len(m.list.Items()), item(m.editHost))
+					m.addingNew = false
+					// Save to file
+					items := m.list.Items()
+					hosts := make([]SSHHost, len(items))
+					for i, it := range items {
+						hosts[i] = SSHHost(it.(item))
 					}
+					usr, err := user.Current()
+					if err == nil {
+						sshConfigPath := filepath.Join(usr.HomeDir, ".ssh", "config")
+						err = saveHostsToFile(hosts, sshConfigPath)
+						if err != nil {
+							m.confirmMsg = "Error saving SSH config! Press any key."
+						} else {
+							m.confirmMsg = "Host added! Press any key to continue."
+						}
+					} else {
+						m.confirmMsg = "Error saving SSH config! Press any key."
+					}
+					m.mode = modeConfirm
+					return m, nil
 				} else {
-					m.confirmMsg = "Error saving SSH config! Press any key."
+					// Save changes to list and file (edit existing)
+					m.list.SetItem(m.selectedIndex, item(m.editHost))
+					m.selected = &m.editHost // update selected pointer
+					// Save to file
+					items := m.list.Items()
+					hosts := make([]SSHHost, len(items))
+					for i, it := range items {
+						hosts[i] = SSHHost(it.(item))
+					}
+					usr, err := user.Current()
+					if err == nil {
+						sshConfigPath := filepath.Join(usr.HomeDir, ".ssh", "config")
+						err = saveHostsToFile(hosts, sshConfigPath)
+						if err != nil {
+							m.confirmMsg = "Error saving SSH config! Press any key."
+						} else {
+							m.confirmMsg = "Changes saved! Press any key to continue."
+						}
+					} else {
+						m.confirmMsg = "Error saving SSH config! Press any key."
+					}
+					m.mode = modeConfirm
+					return m, nil
 				}
-				m.mode = modeConfirm
-				return m, nil
 			}
 			// Handle text input
 			if len(msg.String()) == 1 && msg.Type == tea.KeyRunes {
@@ -156,6 +184,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.editHost.User += ch
 				case 3:
 					m.editHost.Port += ch
+				case 4:
+					m.editHost.IdentityFile += ch
 				}
 				return m, nil
 			}
@@ -177,6 +207,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case 3:
 					if len(m.editHost.Port) > 0 {
 						m.editHost.Port = m.editHost.Port[:len(m.editHost.Port)-1]
+					}
+				case 4:
+					if len(m.editHost.IdentityFile) > 0 {
+						m.editHost.IdentityFile = m.editHost.IdentityFile[:len(m.editHost.IdentityFile)-1]
 					}
 				}
 				return m, nil
@@ -212,6 +246,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.selectedIndex = m.list.Index()
 					m.mode = modeDetails
 				}
+			case "a":
+				// Add new host
+				m.editHost = SSHHost{Port: "22"}
+				m.editField = 0
+				m.addingNew = true
+				m.mode = modeEdit
+				return m, nil
 			}
 		case modeConfirm:
 			// Any key returns to details mode
@@ -270,7 +311,7 @@ func (m model) View() string {
 	case modeDetails:
 		if m.selected != nil {
 			s := m.selected
-			popup := lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).Width(40).Render(
+			popup := lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).Width(50).Render(
 				fmt.Sprintf(
 					"Host: %s\nHostName: %s\nUser: %s\nPort: %s\n\nPress 'e' to edit.\nPress 'd' to delete.\nAny key to return.",
 					s.Host, s.HostName, s.User, s.Port,
@@ -286,7 +327,7 @@ func (m model) View() string {
 	case modeDeleted:
 		return lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).Width(40).Render(m.confirmMsg)
 	default:
-		return m.list.View() + "\nPress q to quit, Enter for details."
+		return m.list.View() + "\nPress q to quit, Enter for details, 'a' to add new host."
 	}
 }
 
@@ -299,6 +340,7 @@ func (m model) editView() string {
 		{"HostName", m.editHost.HostName},
 		{"User", m.editHost.User},
 		{"Port", m.editHost.Port},
+		{"IdentityFile", m.editHost.IdentityFile},
 	}
 	lines := make([]string, len(fields))
 	for i, f := range fields {
@@ -309,7 +351,7 @@ func (m model) editView() string {
 		lines[i] = fmt.Sprintf("%s %s: %s", cursor, f.label, f.value)
 	}
 	return lipgloss.NewStyle().Padding(1, 2).Border(lipgloss.RoundedBorder()).Width(50).Render(
-		"Edit SSH Host (\nTab/Shift+Tab to move,\nEnter to save,\nEsc to cancel):\n\n" +
+		"Edit SSH Host\n- Tab/Shift+Tab to move\n- Enter to save\n- Esc to cancel\n\n" +
 			strings.Join(lines, "\n"),
 	)
 }
